@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<project name="bitmapfont" basedir="." default="main">
+	<!-- bmfont.com 的位置 -->
+	<property name="bmfont.com" location="${basedir}/BMFont/bmfont.com" />
+
+	<!-- 临时文件 -->
+	<property name="temp.nml" location="${basedir}/.nml.merged" />
+	<property name="temp.bmfc" location="${basedir}/.bmfc" />
+
+	<!-- 几个参数 -->
+	<property name="arg.includes" location="${includes}" />
+	<property name="arg.pattern" value="${pattern}" />
+	<property name="arg.bmfc" location="${font}.bmfc" />
+	<property name="arg.output" location="${font}" />
+	<property name="arg.output.png" location="${arg.output}_0.png" />
+
+	<!-- 为某个属性追加一行的方法 -->
+	<scriptdef name="append" language="javascript">
+		<attribute name="property" />
+		<attribute name="text" />
+		<![CDATA[
+			var property = attributes.get("property");
+			project.setProperty(property, project.getProperty(property) + "\r\n" + attributes.get("text"));
+		]]>
+	</scriptdef>
+
+	<!-- 检查参数知否正确 -->
+	<target name="checkargs">
+		<condition property="arg.isvalid">
+			<and>
+				<isset property="includes" />
+				<isset property="font" />
+			</and>
+		</condition>
+	</target>
+
+	<!-- 帮助 -->
+	<target name="help" unless="arg.isvalid">
+		<echo>以下参数都是必须的：</echo>
+		<echo>includes	指定遍历的目录</echo>
+		<echo>pattern	指定匹配的模式</echo>
+		<echo>font	配置文件名称（不含后缀名）</echo>
+		<input>按回车结束</input>
+	</target>
+	
+	<!-- 主程序 -->
+	<target name="main" depends="checkargs,help" if="arg.isvalid">
+		<!-- 遍历所有指定的文件 -->
+		<concat destfile="${temp.nml}" encoding="utf-8" outputencoding="utf-8" fixlastline="yes">
+			<fileset dir="${arg.includes}">
+				<include name="*.nml" />
+			</fileset>
+			<filterchain>
+				<!-- 注释也是不要的 -->
+				<stripjavacomments />
+				<!-- 删除字段，比如说 -->
+				<!-- “test_cn:测试” 中的 “test_cn:” 部分 -->
+				<replaceregex pattern="^[A-Za-z0-9_]+:" replace="" />
+				<!-- 删除多余空行 -->
+				<ignoreblank />
+			</filterchain>
+		</concat>
+		<!-- 读进刚刚输出的文件 -->
+		<loadfile property="chars" srcfile="${temp.nml}" encoding="utf-8" />
+		<echo message="${chars}" />
+		<script language="javascript">
+			<![CDATA[
+			// 循环处理成 char codes，并记录到 charCodes 属性里
+			var unique = {};
+			var chars = project.getProperty("chars");
+			var charCodes = [];
+			for (var i = 0; i < chars.length(); i++)
+			{
+				var charCode = chars.charCodeAt(i);
+				// 保证唯一性
+				if (!unique[charCode])
+				{
+					unique[charCode] = true;
+					charCodes.push(charCode);
+				}
+			}
+			// 按数字排序
+			charCodes.sort(function(a, b){ return a - b; });
+			println(charCodes);
+			
+			// charCodes 要分段显示，否则 BMFont 会识别不出，根据他生成的配置来看 16 比较保险
+			var allPageContents = [];
+			var pageSize = 16;
+			var totalPages = Math.ceil(charCodes.length / 16);
+			for (var i = 0; i < totalPages; i++)
+			{
+				allPageContents.push("chars=" + charCodes.slice(i * pageSize, (i + 1) * pageSize).join());
+			}
+			project.setProperty("charCodes", allPageContents.join("\r\n"));
+			]]>
+		</script>
+		<!-- 读 bmfont 的配置文件（gbk 编码），把里面的 char= 删掉（这是因为可能有人手贱把这个字段保留了） -->
+		<loadfile property="bmfont.cfg" srcfile="${arg.bmfc}" encoding="gbk">
+			<filterchain>
+				<replaceregex pattern="(chars=)[0-9,\-]*" replace="" />
+			</filterchain>
+		</loadfile>
+		<!-- 在 bmfont.cfg 最后面追加一行 -->
+		<append property="bmfont.cfg" text="${charCodes}" />
+		<echo message="${bmfont.cfg}" />
+		<!-- 输出到 ${temp.bmfc}（in gbk），接下来要用 -->
+		<echo message="${bmfont.cfg}" file="${temp.bmfc}" encoding="gbk" />
+		<exec executable="${bmfont.com}" dir="${basedir}">
+			<arg line="-c ${temp.bmfc} -o ${arg.output}" />
+		</exec>
+		<!-- BMFont 默认总是有个分页，我们不需要，改名即可 -->
+		<move file="${arg.output.png}" tofile="${arg.output}.png"/>
+		<!-- 最后清理一下 -->
+		<antcall target="clean" />
+	</target>
+	<target name="clean" unless="keeptempfiles">
+		<delete file="${temp.bmfc}" />
+		<delete file="${temp.nml}" />
+	</target>
+</project>
